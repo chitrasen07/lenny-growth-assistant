@@ -98,6 +98,115 @@ def apply_citations(text: str, chunks: list[RetrievedChunk]) -> tuple[str, set[i
     return cleaned, extract_markers(cleaned), dropped
 
 
+MISSING_LIST_ACK = (
+    "The remaining item(s) could not be verified from the indexed transcript."
+)
+
+_LIST_ITEM = re.compile(r"^(?P<indent>\s*)(?P<bullet>(?:\d+[.)]\s+|[-*•]\s+))(?P<body>.+)$")
+_INFERENCE_LABEL = re.compile(
+    r"(?i)(?:\((?:implicitly|inferred|likely|probably)\)"
+    r"|\bimplicitly\b"
+    r"|\bit can be inferred\b"
+    r"|\binferred that\b"
+    r"|\bas an inference\b"
+    r"|\bthis (?:can|could) be inferred\b)"
+)
+_STANDALONE_INFERENCE = re.compile(
+    r"(?i)^\s*(?:it can be inferred|implicitly[,:]|this (?:can|could) be inferred)\b"
+)
+_MISSING_ALREADY = re.compile(
+    r"(?i)could not be verified|do not (?:list|cover|include|name)|"
+    r"transcripts (?:do not|don't)|not (?:listed|stated|named|given) in the|"
+    r"only (?:lists?|names?|states?) (?:four|three|two|one|\d+)"
+)
+_WORD_COUNTS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_REQUESTED_COUNT = re.compile(
+    r"(?i)\b(?:all\s+)?(?P<n>\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"(?:questions?|checks?|items?|steps?|ways|things|recommendations?|points?|reasons?)\b"
+)
+
+
+def strip_ungrounded_list_padding(text: str) -> str:
+    """Drop list items that fill a requested count with inference instead of evidence.
+
+    Used only on grounded Q&A (not essays): if a numbered/bulleted list mixes cited
+    items with uncited or explicitly inferred ones, the padding is removed and a
+    short acknowledgment is added when the model did not already say so.
+    """
+    if not text.strip():
+        return text
+
+    lines = text.split("\n")
+    is_item = [bool(_LIST_ITEM.match(line)) for line in lines]
+    drop = [False] * len(lines)
+
+    index = 0
+    while index < len(lines):
+        if not is_item[index]:
+            if _STANDALONE_INFERENCE.match(lines[index]):
+                drop[index] = True
+            index += 1
+            continue
+        start = index
+        while index < len(lines) and is_item[index]:
+            index += 1
+        run = range(start, index)
+        bodies = [_LIST_ITEM.match(lines[pos]).group("body") for pos in run]
+        run_has_citation = any(extract_markers(body) for body in bodies)
+        for pos, body in zip(run, bodies, strict=True):
+            if _INFERENCE_LABEL.search(body):
+                drop[pos] = True
+            elif run_has_citation and not extract_markers(body):
+                drop[pos] = True
+
+    if not any(drop):
+        return text
+
+    kept = [line for line, gone in zip(lines, drop, strict=True) if not gone]
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    if cleaned and not _MISSING_ALREADY.search(cleaned):
+        cleaned = f"{cleaned}\n\n{MISSING_LIST_ACK}"
+    logger.info("ungrounded_list_items_dropped", dropped=sum(1 for gone in drop if gone))
+    return cleaned
+
+
+def _requested_item_count(question: str) -> int | None:
+    match = _REQUESTED_COUNT.search(question)
+    if not match:
+        return None
+    raw = match.group("n").lower()
+    if raw.isdigit():
+        value = int(raw)
+        return value if value >= 2 else None
+    return _WORD_COUNTS.get(raw)
+
+
+def acknowledge_short_list(question: str, text: str) -> str:
+    """If the user asked for N items and the answer lists fewer, say so.
+
+    Prompt instructions already ask the model to do this; this is the fallback when
+    it lists only the supported items and forgets to mention the gap.
+    """
+    requested = _requested_item_count(question)
+    if requested is None or not text.strip() or _MISSING_ALREADY.search(text):
+        return text
+    listed = sum(1 for line in text.split("\n") if _LIST_ITEM.match(line))
+    if 0 < listed < requested:
+        return f"{text.rstrip()}\n\n{MISSING_LIST_ACK}"
+    return text
+
+
 def strip_mismatched_attributions(text: str, chunks: list[RetrievedChunk]) -> str:
     """Drop sentences that credit a person the cited excerpt does not support."""
     if not text.strip():

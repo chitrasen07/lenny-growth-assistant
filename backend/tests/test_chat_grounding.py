@@ -244,3 +244,148 @@ async def test_response_reports_provider_model_and_timings(client, db, provider)
     assert body["model"] == "fake-model"
     assert body["timings_ms"]["total_ms"] >= 0
     assert "retrieval_ms" in body["timings_ms"]
+
+
+_STALL_CHECKS = [
+    "Dana Okoye: When a launch stalls I ask four things. "
+    "First, is the channel exhausted. "
+    "Second, is pricing wrong. "
+    "Third, is the ICP too broad. "
+    "Fourth, did activation ever work.",
+]
+
+
+async def test_partial_list_does_not_keep_an_inferred_fifth_item(client, db, provider):  # noqa: ANN001
+    """A requested count is not a license to invent the missing item."""
+    from app.agent.citations import MISSING_LIST_ACK
+    from app.agent.prompts import GROUNDED_ANSWER_SYSTEM
+
+    await seed_transcript(db, title="Launch stall checklist", chunks=_STALL_CHECKS, guest="Dana Okoye")
+    provider.queue(
+        "Dana Okoye recommends [S1]:\n"
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+        "5. (Implicitly) Should you check in with yourself annually [S1]\n"
+    )
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        "/api/chat",
+        json={
+            "session_id": session_id,
+            "message": "What are all five checks Dana Okoye recommends when a launch stalls?",
+        },
+    )
+
+    body = response.json()
+    content = body["message"]["content"]
+    prompt = provider.last_prompt
+
+    assert body["grounded"] is True
+    assert "complete a missing list" in GROUNDED_ANSWER_SYSTEM.lower()
+    assert "could not be verified" in prompt
+    assert "Do not invent, infer, or label a missing item as implicit" in prompt
+    assert "Implicitly" not in content
+    assert "annually" not in content
+    assert "channel exhausted" in content
+    assert "Did activation ever work" in content
+    assert "[S1]" in content
+    assert MISSING_LIST_ACK in content
+    assert body["message"]["metadata"]["cited_markers"] == [1]
+
+
+async def test_invented_uncited_list_item_is_dropped_from_a_cited_list(client, db, provider):  # noqa: ANN001
+    await seed_transcript(db, title="Launch stall checklist", chunks=_STALL_CHECKS, guest="Dana Okoye")
+    provider.queue(
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+        "5. Hire a growth lead immediately\n"
+    )
+    session_id = await _new_session(client)
+
+    content = (
+        await client.post(
+            "/api/chat",
+            json={
+                "session_id": session_id,
+                "message": "What are all five checks Dana Okoye recommends when a launch stalls?",
+            },
+        )
+    ).json()["message"]["content"]
+
+    assert "Hire a growth lead" not in content
+    assert "Did activation ever work" in content
+    assert "[S1]" in content
+    assert "could not be verified" in content.lower()
+
+
+async def test_partial_list_keeps_supported_items_and_acknowledges_the_gap(client, db, provider):  # noqa: ANN001
+    """When evidence covers only four of five requested items, keep those four and say so."""
+    from app.agent.citations import MISSING_LIST_ACK
+
+    await seed_transcript(db, title="Launch stall checklist", chunks=_STALL_CHECKS, guest="Dana Okoye")
+    provider.queue(
+        "Dana Okoye recommends four checks [S1]:\n"
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n\n"
+        "The remaining item(s) could not be verified from the indexed transcript."
+    )
+    session_id = await _new_session(client)
+
+    response = await client.post(
+        "/api/chat",
+        json={
+            "session_id": session_id,
+            "message": "What are all five checks Dana Okoye recommends when a launch stalls?",
+        },
+    )
+
+    body = response.json()
+    content = body["message"]["content"]
+    cited = [source for source in body["message"]["sources"] if source["cited"]]
+
+    assert body["grounded"] is True
+    assert "channel exhausted" in content
+    assert "pricing wrong" in content
+    assert "ICP too broad" in content
+    assert "activation ever work" in content
+    assert "Implicitly" not in content
+    assert MISSING_LIST_ACK in content
+    assert cited, "valid [S1] citations must still resolve to retrieved chunks"
+    assert cited[0]["guest"] == "Dana Okoye"
+    assert "four things" in cited[0]["excerpt"]
+    assert body["message"]["metadata"]["cited_markers"] == [1]
+
+
+async def test_short_list_without_a_gap_sentence_is_still_acknowledged(client, db, provider):  # noqa: ANN001
+    from app.agent.citations import MISSING_LIST_ACK
+
+    await seed_transcript(db, title="Launch stall checklist", chunks=_STALL_CHECKS, guest="Dana Okoye")
+    provider.queue(
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+    )
+    session_id = await _new_session(client)
+
+    content = (
+        await client.post(
+            "/api/chat",
+            json={
+                "session_id": session_id,
+                "message": "What are all five checks Dana Okoye recommends when a launch stalls?",
+            },
+        )
+    ).json()["message"]["content"]
+
+    assert "Did activation ever work" in content
+    assert "[S1]" in content
+    assert MISSING_LIST_ACK in content
+    assert "Implicitly" not in content

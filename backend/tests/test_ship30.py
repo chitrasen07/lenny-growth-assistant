@@ -9,7 +9,14 @@ from app.agent.skills.ship30 import (
     count_h2_sections,
     count_words,
     drop_incomplete_tail,
+    drop_outsider_guest_sentences,
+    drop_off_topic_cited_sentences,
+    keep_on_topic_chunks,
+    merge_continuation,
+    promote_bold_headings,
+    strip_unsupported_causation,
     topic_focus,
+    trim_to_maximum,
 )
 from app.agent.types import SkillContext
 from app.rag.retrieval import RetrievalService
@@ -85,20 +92,21 @@ async def test_short_draft_triggers_one_revision_pass(db, settings, provider):  
     # The revision prompt must state the actual and target counts.
     revision_prompt = provider.last_prompt
     assert "300 words" in revision_prompt
-    assert "Expand" in revision_prompt
+    assert "Continue" in revision_prompt
 
 
-async def test_revision_is_discarded_when_it_moves_further_from_target(db, settings, provider):  # noqa: ANN001
+async def test_short_continuation_is_appended_until_the_cleaned_count_clears_the_floor(db, settings, provider):  # noqa: ANN001
     await seed_transcript(db, title="Activation deep dive", chunks=ACTIVATION_CHUNKS * 2)
-    # 1000 is still below the 1,062-word floor, so a second continue is attempted and
-    # also discarded when it is worse than the kept draft.
-    provider.queue(_essay(1000), _essay(200), _essay(150))
+    provider.queue(_essay(1000), _essay(200))
 
     context = SkillContext(provider=provider, retrieval=RetrievalService(db, settings))
     result = await Ship30EssaySkill(settings).run(context, topic="activation")
 
-    assert count_words(result.text) == 1000, "the closer draft should be kept"
-    assert result.meta["attempts"] == 3
+    assert result.meta["attempts"] == 2
+    assert result.meta["word_count"] == count_words(result.text)
+    assert result.meta["word_count"] >= 1062
+    assert result.meta["within_tolerance"] is True
+    assert "[S1]" in result.text
 
 
 async def test_still_short_draft_gets_a_second_continue(db, settings, provider):  # noqa: ANN001
@@ -109,9 +117,11 @@ async def test_still_short_draft_gets_a_second_continue(db, settings, provider):
     context = SkillContext(provider=provider, retrieval=RetrievalService(db, settings))
     result = await Ship30EssaySkill(settings).run(context, topic="activation")
 
-    assert result.meta["attempts"] == 3
+    assert result.meta["attempts"] == 2
     assert result.meta["within_tolerance"] is True
-    assert count_words(result.text) == 1240
+    assert count_words(result.text) >= 1062
+    assert result.meta["word_count"] == count_words(result.text)
+    assert "[S1]" in result.text
 
 
 async def test_essay_refuses_when_evidence_is_too_thin(db, settings, provider):  # noqa: ANN001
@@ -152,8 +162,9 @@ async def test_essay_prompt_encodes_the_writing_principles(db, settings, provide
     assert "repeat" in prompt.lower()
     assert "1250 words" in prompt or "1250" in prompt
     assert "EVIDENCE" in prompt
-    # Anti-fabrication instruction must be present in the essay prompt too.
     assert "invent" in prompt.lower()
+    assert "candidate" in prompt.lower()
+    assert "causal" in prompt.lower()
 
 
 async def test_hallucinated_markers_are_stripped_from_the_essay(db, settings, provider):  # noqa: ANN001
@@ -311,7 +322,7 @@ async def test_cleanup_shortfall_triggers_a_continuation(db, settings, provider)
     assert result.meta["within_tolerance"] is True
     assert count_words(result.text) == 1240
     assert "Lenny Rachitsky" not in result.text
-    assert "Expand" in provider.last_prompt
+    assert "Continue" in provider.last_prompt
     assert "1000 words" in provider.last_prompt
 
 
@@ -353,9 +364,9 @@ async def test_at_most_three_generations(db, settings, provider):  # noqa: ANN00
 
     assert len(provider.calls) == 3
     assert result.meta["attempts"] == 3
-    assert count_words(result.text) == 500
-    assert result.meta["word_count"] == 500
-    assert result.meta["within_tolerance"] is False
+    assert result.meta["word_count"] == count_words(result.text)
+    assert result.meta["word_count"] >= 1062
+    assert result.meta["within_tolerance"] is True
 
 
 async def test_citation_validation_runs_after_cleanup_continuation(db, settings, provider):  # noqa: ANN001
@@ -381,6 +392,27 @@ async def test_citation_validation_runs_after_cleanup_continuation(db, settings,
     assert 99 in result.meta["dropped_markers"]
     assert result.meta["cited_markers"] == [1]
     assert result.meta["word_count"] == count_words(result.text)
+
+
+def test_promote_bold_standalone_lines_become_h2s():
+    text = "**Why activation matters**\n\nActivation is a promise you keep [S1].\nThis is **not** a heading."
+    cleaned = promote_bold_headings(text)
+    assert "## Why activation matters" in cleaned
+    assert "**Why activation matters**" not in cleaned
+    assert "This is **not** a heading." in cleaned
+
+
+def test_merge_continuation_strips_a_repeated_title():
+    merged = merge_continuation("# Title\n\nHello there.", "# Other\n\nMore words here.")
+    assert merged.count("# Title") == 1
+    assert "More words here." in merged
+    assert "# Other" not in merged
+
+
+def test_trim_to_maximum_drops_trailing_paragraphs():
+    trimmed = trim_to_maximum(_essay(1800), 1437)
+    assert count_words(trimmed) <= 1437
+    assert count_words(trimmed) >= 1062
 
 
 def test_constrain_h2_demotes_extra_headings_without_deleting_prose():
@@ -472,3 +504,165 @@ async def test_supported_numeric_claim_is_kept_when_guest_matches(db, settings, 
     assert "47%" in result.text
     assert "Dana Okoye" in result.text
     assert result.meta["word_count"] == count_words(result.text)
+
+
+def _retrieved(rank: int, content: str, *, guest: str = "Dana Okoye", title: str = "Activation deep dive"):
+    from app.rag.retrieval import RetrievedChunk
+
+    return RetrievedChunk(
+        chunk_id=f"chunk-{rank}",
+        transcript_id="transcript-1",
+        content=content,
+        distance=0.2,
+        rank=rank,
+        chunk_index=rank,
+        speaker=guest,
+        title=title,
+        episode=None,
+        guest=guest,
+        source_url=None,
+        source_file="fixture.md",
+    )
+
+
+def test_keep_on_topic_chunks_does_not_keep_unrelated_retrieved_advice():
+    chunks = [
+        _retrieved(0, "Dana Okoye: Activation is the first meaningful action."),
+        _retrieved(1, "Dana Okoye: Activation rose after we cut onboarding."),
+        _retrieved(2, "Rafael Mendes: Pricing is a packaging problem before it is a number."),
+        _retrieved(3, "Jen Abel: Build relationships by sharing your team's biggest learning."),
+    ]
+
+    kept = keep_on_topic_chunks(chunks, "activation")
+
+    assert [chunk.guest for chunk in kept] == ["Dana Okoye", "Dana Okoye"]
+    assert all("activation" in chunk.content.lower() for chunk in kept)
+
+
+def test_unsupported_causal_explanation_is_dropped():
+    chunk = _retrieved(
+        0,
+        "Jason Cohen: Raise prices and signups don't change. You make more revenue.",
+        guest="Jason Cohen",
+        title="Pricing",
+    )
+    text = (
+        "Jason Cohen suggests raising prices as a way to increase revenue without affecting signups [S1]. "
+        "This is because high prices create a perception of value and exclusivity, "
+        "making users more likely to engage with your product [S1]."
+    )
+
+    cleaned = strip_unsupported_causation(text, [chunk])
+
+    assert "exclusivity" not in cleaned
+    assert "more likely to engage" not in cleaned
+    assert "Raise prices" in chunk.content
+    assert "[S1]" in cleaned
+
+
+def test_supported_causal_explanation_is_kept():
+    chunk = _retrieved(
+        0,
+        "Dana Okoye: Activation rose because users reached value faster rather than because signup got shorter.",
+    )
+    text = "Dana Okoye says activation rose because users reached value faster [S1]."
+
+    assert strip_unsupported_causation(text, [chunk]) == text
+
+
+def test_outsider_guest_sentences_are_dropped_after_topic_filter():
+    kept = [_retrieved(0, "Dana Okoye: Activation is a first meaningful action.")]
+    original = kept + [
+        _retrieved(1, "Jen Abel: Build relationships by sharing your team's biggest learning.", guest="Jen Abel"),
+    ]
+    text = (
+        "Activation is the first valuable experience [S1]. "
+        "Jen Abel suggests building relationships by sharing your team's biggest learning this year."
+    )
+
+    cleaned = drop_outsider_guest_sentences(text, kept, original)
+
+    assert "Jen Abel" not in cleaned
+    assert "first valuable experience" in cleaned
+    assert "[S1]" in cleaned
+
+
+def test_cited_sentence_from_off_topic_chunk_is_dropped():
+    chunks = [
+        _retrieved(0, "Dana Okoye: Activation is the first meaningful action."),
+        _retrieved(1, "Rafael Mendes: Pricing is a packaging problem.", guest="Rafael Mendes"),
+    ]
+    text = (
+        "Activation is the first meaningful action [S1]. "
+        "Pricing is a packaging problem before it is a number [S2]."
+    )
+
+    cleaned = drop_off_topic_cited_sentences(text, chunks, "activation")
+
+    assert "first meaningful action" in cleaned
+    assert "[S1]" in cleaned
+    assert "packaging problem" not in cleaned
+    assert "[S2]" not in cleaned
+
+
+async def test_short_738_word_draft_is_continued_until_cleaned_count_clears_floor(db, settings, provider):  # noqa: ANN001
+    await seed_transcript(db, title="Activation deep dive", chunks=ACTIVATION_CHUNKS * 2)
+    provider.queue(_essay(738), _essay(1240))
+
+    context = SkillContext(provider=provider, retrieval=RetrievalService(db, settings))
+    result = await Ship30EssaySkill(settings).run(context, topic="activation")
+
+    assert len(provider.calls) == 2
+    assert result.meta["attempts"] == 2
+    assert result.meta["word_count"] == count_words(result.text) == 1240
+    assert result.meta["word_count"] >= 1062
+    assert result.meta["within_tolerance"] is True
+    assert "738 words" in provider.last_prompt
+    assert "[S1]" in result.text
+    assert count_h2_sections(result.text) <= 6
+
+
+async def test_unrelated_retrieved_neighbours_do_not_pad_thin_topic_evidence(db, settings, provider):  # noqa: ANN001
+    await seed_transcript(db, title="Activation deep dive", chunks=ACTIVATION_CHUNKS[:1], guest="Dana Okoye")
+    await seed_transcript(db, title="Enterprise deals", chunks=[
+        "Jen Abel: Build relationships by sharing your team's biggest learning this year.",
+        "Jen Abel: Enterprise sales is about creating champions inside the account.",
+    ] * 2, guest="Jen Abel")
+    provider.queue(_essay(1250))
+
+    context = SkillContext(provider=provider, retrieval=RetrievalService(db, settings))
+    result = await Ship30EssaySkill(settings).run(context, topic="activation")
+
+    assert result.refused is True
+    assert provider.calls == []
+    if result.retrieval is not None:
+        evidence = result.retrieval.evidence_block()
+        assert "Jen Abel" not in evidence
+        assert "Enterprise sales" not in evidence
+
+
+async def test_unsupported_causal_is_stripped_from_the_essay_and_citations_remain(db, settings, provider):  # noqa: ANN001
+    await seed_transcript(
+        db,
+        title="Activation deep dive",
+        chunks=ACTIVATION_CHUNKS * 2,
+        guest="Dana Okoye",
+        speakers=["Dana Okoye"] * 4,
+    )
+    filler = " ".join(f"word{index}" for index in range(1240))
+    provider.queue(
+        f"# Title\n\n{filler}. Dana Okoye says activation is the first meaningful action [S1]. "
+        "This is because high prices create a perception of value and exclusivity, "
+        "making users more likely to engage with your product [S1]."
+    )
+
+    context = SkillContext(provider=provider, retrieval=RetrievalService(db, settings))
+    result = await Ship30EssaySkill(settings).run(context, topic="activation")
+
+    assert result.refused is False
+    assert "exclusivity" not in result.text
+    assert "more likely to engage" not in result.text
+    assert "[S1]" in result.text
+    assert result.meta["cited_markers"] == [1]
+    assert result.meta["word_count"] == count_words(result.text)
+    assert count_h2_sections(result.text) <= 6

@@ -211,8 +211,8 @@ Record results as **PASS** / **FAIL** / **BLOCKED**. A test that cannot run is n
 
 | Section | Result | Notes |
 | --- | --- | --- |
-| 1. Ollama | | *unverified by author — run first* |
-| 2. Cloud / switching | | *unverified by author* |
+| 1. Ollama | PASS | Verified live (`llama3.1:8b` / `nomic-embed-text`); re-run before recording |
+| 2. Cloud / switching | | Missing-key path verified (`provider_not_configured`). Live Anthropic generation unverified (no key) |
 | 3. Grounding & citations | | |
 | 4. Sessions | | |
 | 5. Follow-up context | | |

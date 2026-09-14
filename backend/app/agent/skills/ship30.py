@@ -63,6 +63,7 @@ _ESSAY_PREFIX = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 _TERMINAL_PUNCTUATION = re.compile(r"""[.!?]["')\]]*$""")
+_STANDALONE_BOLD = re.compile(r"^\*\*(.+?)\*\*\s*$")
 
 
 def count_words(markdown: str) -> int:
@@ -116,6 +117,64 @@ def constrain_h2_sections(markdown: str, maximum: int = _MAX_H2_SECTIONS) -> str
     return "\n".join(lines)
 
 
+def promote_bold_headings(markdown: str) -> str:
+    """Treat a standalone bold line as an H2. Local models often skip ``##``."""
+    lines: list[str] = []
+    for line in markdown.split("\n"):
+        match = _STANDALONE_BOLD.fullmatch(line.strip())
+        heading = match.group(1).strip() if match else ""
+        if heading and 1 <= len(heading.split()) <= 12 and not heading.startswith("["):
+            lines.append(f"## {heading}")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def merge_continuation(base: str, addition: str) -> str:
+    """Append a continue-pass onto the cleaned draft without repeating the H1."""
+    add = addition.strip()
+    if not add:
+        return base
+    add = re.sub(r"^#\s+.+\n+", "", add)
+    return f"{base.rstrip()}\n\n{add}"
+
+
+def trim_to_maximum(markdown: str, maximum: int) -> str:
+    """Drop trailing words until the essay is at most ``maximum`` words."""
+    if count_words(markdown) <= maximum:
+        return markdown
+    lines = markdown.split("\n")
+    kept: list[str] = []
+    for line in lines:
+        candidate = "\n".join(kept + [line]) if kept else line
+        if count_words(candidate) <= maximum:
+            kept.append(line)
+            continue
+        remaining = maximum - count_words("\n".join(kept)) if kept else maximum
+        prefix: list[str] = []
+        for token in line.split():
+            if count_words(" ".join(prefix + [token])) > remaining:
+                break
+            prefix.append(token)
+        if prefix:
+            kept.append(" ".join(prefix))
+        break
+    return "\n".join(kept).rstrip()
+
+
+def drop_process_notes(markdown: str) -> str:
+    """Remove leaked drafting notes that mention the evidence block or word target."""
+    kept: list[str] = []
+    for line in markdown.split("\n"):
+        if re.match(r"(?i)^\s*note:", line) and re.search(
+            r"(?i)evidence|h2|word target|these instructions", line
+        ):
+            logger.info("ship30_dropped_process_note")
+            continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
 def _topic_terms(focus: str) -> list[str]:
     return [
         token
@@ -125,20 +184,24 @@ def _topic_terms(focus: str) -> list[str]:
 
 
 def keep_on_topic_chunks(chunks: list[RetrievedChunk], focus: str) -> list[RetrievedChunk]:
-    """Drop retrieved excerpts that never mention the essay topic. Markers are left unchanged."""
+    """Keep excerpts whose body mentions the essay topic.
+
+    Retrieved neighbours are candidates, not mandatory content. A chunk about pricing or
+    distribution is dropped unless it actually names the topic. Markers on kept chunks
+    are left unchanged so citations still resolve. If too few remain, the skill refuses
+    rather than writing from off-topic leftovers.
+    """
     terms = _topic_terms(focus)
     if not terms:
         return chunks
     kept: list[RetrievedChunk] = []
     for chunk in chunks:
-        haystack = f"{chunk.content} {chunk.title} {chunk.guest or ''}".lower()
+        haystack = chunk.content.lower()
         if any(term in haystack for term in terms):
             kept.append(chunk)
         else:
             logger.info("ship30_dropped_off_topic_chunk", marker=chunk.marker, title=chunk.title[:80])
-    if len(kept) >= _MIN_CHUNKS_FOR_ESSAY:
-        return kept
-    return chunks
+    return kept
 
 
 def drop_incomplete_tail(markdown: str) -> str:
@@ -165,6 +228,176 @@ def drop_incomplete_tail(markdown: str) -> str:
         logger.info("ship30_dropped_incomplete_tail", words=len(words))
         break
     return "\n".join(lines).rstrip()
+
+
+_CAUSAL_MARK = re.compile(
+    r"(?i)\b(?:this is because|that's because|because|therefore|thus|hence|"
+    r"as a result|which means|which causes|which makes|"
+    r"making (?:users|customers|people) more likely)\b"
+)
+_CAUSAL_SPLIT = re.compile(
+    r"(?i)\b(?:this is because|that's because|because|therefore|thus|hence|"
+    r"as a result|which means|which causes|which makes)\b"
+)
+_CAUSAL_STOP = {
+    "about",
+    "after",
+    "because",
+    "being",
+    "could",
+    "hence",
+    "likely",
+    "makes",
+    "making",
+    "means",
+    "more",
+    "people",
+    "result",
+    "should",
+    "their",
+    "therefore",
+    "users",
+    "using",
+    "which",
+    "would",
+}
+
+
+def _split_sentences(line: str) -> list[str]:
+    return [part for part in re.split(r"(?<=[.!?])\s+", line.strip()) if part]
+
+
+def strip_unsupported_causation(text: str, chunks: list[RetrievedChunk]) -> str:
+    """Drop sentences that invent a causal chain the cited excerpt does not state."""
+    if not text.strip():
+        return text
+    by_marker = {chunk.marker: chunk for chunk in chunks}
+    kept_lines: list[str] = []
+    for line in text.split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            kept_lines.append(line)
+            continue
+        kept = [
+            sentence
+            for sentence in _split_sentences(line)
+            if not _is_unsupported_causal(sentence, by_marker)
+        ]
+        if kept:
+            kept_lines.append(" ".join(kept))
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines))
+    return cleaned.strip()
+
+
+def _is_unsupported_causal(sentence: str, by_marker: dict[int, RetrievedChunk]) -> bool:
+    if not _CAUSAL_MARK.search(sentence):
+        return False
+    markers = extract_markers(sentence)
+    haystacks = [
+        by_marker[marker].content.lower()
+        for marker in markers
+        if marker in by_marker
+    ]
+    combined = "\n".join(haystacks)
+    parts = _CAUSAL_SPLIT.split(sentence, maxsplit=1)
+    explanation = parts[1] if len(parts) > 1 else sentence
+    explanation = re.sub(r"\[\s*S\s*\d+(?:\s*,\s*S?\s*\d+)*\s*\]", " ", explanation, flags=re.I)
+    tokens = [
+        token
+        for token in re.findall(r"[a-z]{5,}", explanation.lower())
+        if token not in _CAUSAL_STOP
+    ]
+    if not tokens:
+        return not any(word in combined for word in ("because", "therefore", "thus"))
+    hits = sum(1 for token in tokens if token in combined)
+    unsupported = hits / len(tokens) < 0.5
+    if unsupported:
+        logger.info("ship30_dropped_unsupported_causal", preview=sentence[:120])
+    return unsupported
+
+
+def _person_key(raw: str | None) -> str:
+    if not raw:
+        return ""
+    tokens = raw.split()
+    while tokens and re.fullmatch(r"[0-9.]+", tokens[-1]):
+        tokens.pop()
+    return " ".join(tokens).lower()
+
+
+def _people_from_chunks(chunks: list[RetrievedChunk]) -> set[str]:
+    names: set[str] = set()
+    for chunk in chunks:
+        for raw in (chunk.speaker, chunk.guest):
+            key = _person_key(raw)
+            if key:
+                names.add(key)
+    return names
+
+
+def drop_outsider_guest_sentences(
+    text: str,
+    kept_chunks: list[RetrievedChunk],
+    original_chunks: list[RetrievedChunk],
+) -> str:
+    """Drop claims credited to guests whose excerpts were filtered out as off-topic."""
+    if not text.strip():
+        return text
+    allowed = _people_from_chunks(kept_chunks)
+    banned = {
+        name
+        for name in _people_from_chunks(original_chunks)
+        if name not in allowed and "rachitsky" not in name
+    }
+    if not banned:
+        return text
+    patterns = [
+        re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
+        for name in sorted(banned, key=len, reverse=True)
+    ]
+    kept_lines: list[str] = []
+    for line in text.split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            kept_lines.append(line)
+            continue
+        kept = [
+            sentence
+            for sentence in _split_sentences(line)
+            if not any(pattern.search(sentence) for pattern in patterns)
+        ]
+        if kept:
+            kept_lines.append(" ".join(kept))
+        elif any(pattern.search(line) for pattern in patterns):
+            logger.info("ship30_dropped_outsider_guest", preview=line[:120])
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines))
+    return cleaned.strip()
+
+
+def drop_off_topic_cited_sentences(text: str, chunks: list[RetrievedChunk], focus: str) -> str:
+    """Drop cited sentences whose excerpts never mention the essay topic."""
+    terms = _topic_terms(focus)
+    if not text.strip() or not terms:
+        return text
+    by_marker = {chunk.marker: chunk for chunk in chunks}
+    kept_lines: list[str] = []
+    for line in text.split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            kept_lines.append(line)
+            continue
+        kept: list[str] = []
+        for sentence in _split_sentences(line):
+            markers = extract_markers(sentence)
+            if not markers:
+                kept.append(sentence)
+                continue
+            cited = [by_marker[marker] for marker in markers if marker in by_marker]
+            if not cited or any(any(term in chunk.content.lower() for term in terms) for chunk in cited):
+                kept.append(sentence)
+            else:
+                logger.info("ship30_dropped_off_topic_sentence", preview=sentence[:120])
+        if kept:
+            kept_lines.append(" ".join(kept))
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines))
+    return cleaned.strip()
 
 
 class Ship30EssaySkill(Skill):
@@ -205,6 +438,7 @@ class Ship30EssaySkill(Skill):
             # a small corpus could never supply enough evidence to write an essay at all.
             max_chunks_per_episode=settings.essay_max_chunks_per_episode,
         )
+        original_chunks = list(retrieval.chunks)
         retrieval.chunks = keep_on_topic_chunks(retrieval.chunks, focus)
 
         if len(retrieval.chunks) < _MIN_CHUNKS_FOR_ESSAY:
@@ -234,9 +468,12 @@ class Ship30EssaySkill(Skill):
                 f"EVIDENCE:\n{retrieval.evidence_block()}\n\n"
                 f"TOPIC: {focus}\n\n"
                 f"Write one coherent Ship 30 essay on that topic only, with 4-6 H2 sections "
-                f"(hook, why it is hard, transcript evidence, practical lessons, one takeaway). "
+                f"that all advance the same thesis (why it matters, what gets in the way, "
+                f"how to think about it, lessons from the evidence, one takeaway). "
                 f"Do not add a heading per guest. Do not repeat the same thesis in a new section. "
-                f"Use only EVIDENCE excerpts that directly support this topic; ignore the rest even if retrieved. "
+                f"Retrieved excerpts are candidates: use only those that directly support this topic "
+                f"and ignore the rest, even if they mention growth, revenue, pricing, distribution "
+                f"or relationships. Do not invent causal explanations the excerpts do not state. "
                 f"Aim for {target} words ({minimum}-{maximum}). "
                 "Every sentence must be complete. Do not invent guests, quotes, URLs, numbers or claims. "
                 "A [S#] marker is valid only when that excerpt actually states the claim.",
@@ -247,42 +484,8 @@ class Ship30EssaySkill(Skill):
         max_tokens = max(settings.llm_max_output_tokens, 3000)
         response = await context.provider.complete(messages, max_tokens=max_tokens, temperature=0.6)
         essay = response.text.strip()
-        words = count_words(essay)
         attempts = 1
         total_latency = response.latency_ms
-
-        if essay and not (minimum <= words <= maximum):
-            logger.info("ship30_length_revision", words=words, target=target)
-            messages.extend(
-                [
-                    ChatMessage("assistant", essay),
-                    ChatMessage("user", self._revision_prompt(words, target, minimum, maximum, focus)),
-                ]
-            )
-            revision = await context.provider.complete(messages, max_tokens=max_tokens, temperature=0.5)
-            total_latency += revision.latency_ms
-            attempts = 2
-            revised_words = count_words(revision.text)
-            # Keep the revision only if it is genuinely closer to the target.
-            if revision.text.strip() and abs(revised_words - target) < abs(words - target):
-                essay, words = revision.text.strip(), revised_words
-
-        # Local models often still undershoot after one rewrite. Continue the kept draft
-        # from the same evidence rather than inventing a third full rewrite.
-        while essay and words < minimum and attempts < _MAX_ATTEMPTS:
-            logger.info("ship30_length_continue", words=words, target=target, attempt=attempts)
-            messages.extend(
-                [
-                    ChatMessage("assistant", essay),
-                    ChatMessage("user", self._revision_prompt(words, target, minimum, maximum, focus)),
-                ]
-            )
-            continuation = await context.provider.complete(messages, max_tokens=max_tokens, temperature=0.5)
-            total_latency += continuation.latency_ms
-            attempts += 1
-            continued_words = count_words(continuation.text)
-            if continuation.text.strip() and abs(continued_words - target) < abs(words - target):
-                essay, words = continuation.text.strip(), continued_words
 
         if not essay:
             return SkillResult(
@@ -292,28 +495,50 @@ class Ship30EssaySkill(Skill):
                 meta={"refusal_reason": "empty_model_response"},
             )
 
-        cleaned, cited, dropped, words = self._finalize_essay(essay, retrieval.chunks)
+        cleaned, cited, dropped, words = self._finalize_essay(
+            essay, retrieval.chunks, focus, original_chunks, maximum
+        )
 
-        # Citation cleanup can drop a draft that looked long enough. Use any remaining
-        # generation budget to continue from the cleaned essay and the same evidence.
-        while cleaned and words < minimum and attempts < _MAX_ATTEMPTS:
-            logger.info("ship30_length_continue_after_cleanup", words=words, target=target, attempt=attempts)
+        # Length is the cleaned, citation-validated essay — never the raw model draft.
+        while cleaned and attempts < _MAX_ATTEMPTS:
+            if minimum <= words <= maximum:
+                break
+            logger.info(
+                "ship30_length_continue_after_cleanup",
+                words=words,
+                target=target,
+                attempt=attempts,
+            )
             messages.extend(
                 [
                     ChatMessage("assistant", cleaned),
                     ChatMessage("user", self._revision_prompt(words, target, minimum, maximum, focus)),
                 ]
             )
-            continuation = await context.provider.complete(messages, max_tokens=max_tokens, temperature=0.5)
+            continuation = await context.provider.complete(
+                messages, max_tokens=max_tokens, temperature=0.5
+            )
             total_latency += continuation.latency_ms
             attempts += 1
             if not continuation.text.strip():
                 break
-            next_cleaned, next_cited, next_dropped, next_words = self._finalize_essay(
-                continuation.text.strip(), retrieval.chunks
+            raw = continuation.text.strip()
+            replaced = self._finalize_essay(
+                raw, retrieval.chunks, focus, original_chunks, maximum
             )
-            if next_cleaned and abs(next_words - target) < abs(words - target):
-                cleaned, cited, dropped, words = next_cleaned, next_cited, next_dropped, next_words
+            candidates = [(cleaned, cited, dropped, words), replaced]
+            if words < minimum:
+                merged = self._finalize_essay(
+                    merge_continuation(cleaned, raw),
+                    retrieval.chunks,
+                    focus,
+                    original_chunks,
+                    maximum,
+                )
+                candidates.append(merged)
+            cleaned, cited, dropped, words = self._pick_draft(
+                target, minimum, maximum, *candidates
+            )
 
         title = self._extract_title(cleaned) or f"Ship 30: {focus}"
 
@@ -343,29 +568,59 @@ class Ship30EssaySkill(Skill):
 
     @staticmethod
     def _finalize_essay(
-        essay: str, chunks: list[RetrievedChunk]
+        essay: str,
+        chunks: list[RetrievedChunk],
+        focus: str = "",
+        original_chunks: list[RetrievedChunk] | None = None,
+        maximum: int | None = None,
     ) -> tuple[str, set[int], set[int], int]:
-        """Verify citations, drop truncated tails, and count the essay that will be shown."""
+        """Verify citations, drop off-topic padding, and count the essay that will be shown.
+
+        Word count is always taken from this cleaned text, never from the raw model draft.
+        """
         cleaned, cited, dropped = apply_citations(essay, chunks)
+        cleaned = strip_unsupported_causation(cleaned, chunks)
+        cleaned = drop_outsider_guest_sentences(cleaned, chunks, original_chunks or chunks)
+        cleaned = drop_off_topic_cited_sentences(cleaned, chunks, focus)
+        cleaned = drop_process_notes(cleaned)
+        cleaned = promote_bold_headings(cleaned)
         cleaned = constrain_h2_sections(cleaned)
         cleaned = drop_incomplete_tail(cleaned)
+        if maximum is not None:
+            cleaned = trim_to_maximum(cleaned, maximum)
         cited = extract_markers(cleaned) & {chunk.marker for chunk in chunks}
         return cleaned, cited, dropped, count_words(cleaned)
 
     @staticmethod
+    def _pick_draft(
+        target: int,
+        minimum: int,
+        maximum: int,
+        *drafts: tuple[str, set[int], set[int], int] | None,
+    ) -> tuple[str, set[int], set[int], int]:
+        viable = [draft for draft in drafts if draft and draft[0]]
+        in_range = [draft for draft in viable if minimum <= draft[3] <= maximum]
+        if in_range:
+            return min(in_range, key=lambda draft: abs(draft[3] - target))
+        under = [draft for draft in viable if draft[3] <= maximum]
+        if under:
+            return max(under, key=lambda draft: draft[3])
+        return min(viable, key=lambda draft: draft[3])
+
+    @staticmethod
     def _revision_prompt(words: int, target: int, minimum: int, maximum: int, focus: str) -> str:
         if words < minimum:
+            missing = minimum - words
             return (
-                f"That draft is {words} words; the target is {target} ({minimum}-{maximum}). "
-                f"Expand this draft in place. Keep every on-topic paragraph and continue the same essay "
-                f"using only the EVIDENCE about: {focus}. "
-                "Develop existing points with more concrete detail from the EVIDENCE. "
-                "Stay at 4-6 H2 sections; fold extra ideas into those sections instead of adding headings. "
-                "Do not add off-topic sections. Do not invent anything. Do not repeat the conclusion. "
-                "Return the complete revised essay only."
+                f"That cleaned draft is {words} words; the target is {target} ({minimum}-{maximum}). "
+                f"It is {missing} words short. Continue the same essay on {focus} from the end of "
+                "the draft. Output only new complete paragraphs and H2 sections; do not repeat the "
+                "title or existing sections. Use only the same EVIDENCE. Stay at a total of 4-6 H2 "
+                "sections. Do not add off-topic sections. Do not invent causal explanations. "
+                "Return new prose only."
             )
         return (
-            f"That draft is {words} words; the target is {target} ({minimum}-{maximum}). "
+            f"That cleaned draft is {words} words; the target is {target} ({minimum}-{maximum}). "
             "Tighten it by cutting repetition, extra headings and weaker sections. "
             "Keep 4-6 H2 sections, the hook, and one closing takeaway. Return the complete revised essay only."
         )

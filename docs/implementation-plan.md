@@ -7,8 +7,8 @@
 **Status: delivered.** All 16 phases are complete. Re-run pytest and `npm test` for current
 counts. Ruff and TypeScript are clean, and the stack starts from
 `docker compose up --build`. Live Ollama generation **has** been exercised against the
-official corpus. The live Anthropic API has not (no key). Latest Ship 30 live quality after
-the H2 cap is unverified.
+official corpus. The live Anthropic API has not (no key). Live Ship 30 after the H2 cap
+was re-run on Ollama (3 generations, 1,413 cleaned words, 6 H2s).
 >
 > Where the build diverged from this plan, the divergence and its reason are recorded in
 > [`../agent-transcripts/decision-log.md`](../agent-transcripts/decision-log.md). The two
@@ -303,7 +303,7 @@ Containers reach it via `host.docker.internal`.
 | Citations resolvable to stored chunks | ✅ enforced structurally (markers verified against chunk ids); test-covered |
 | Weak retrieval → honest refusal, not model knowledge | ✅ two paths: pre-LLM when `selected=0`; evidence-only model refusal when weak chunks still retrieve |
 | Follow-up uses that session's turns only | ✅ test-covered, including a cross-session negative case |
-| Essay within ~15% of 1,250 words, grounded | ✅ test-covered · latest live essay after H2 cap unverified |
+| Essay within ~15% of 1,250 words, grounded | ✅ test-covered · live Ollama after H2 cap: 1,413 words / 6 H2s / 3 calls |
 | Artifacts render; HTML sanitised and sandboxed | ✅ test-covered in both layers |
 | Provider switching works, provider visible | ✅ header toggle; Anthropic → SDK runtime · live cloud generation unverified |
 | Test suites pass, reported honestly | ✅ re-run pytest + `npm test`; ruff and `tsc` clean |

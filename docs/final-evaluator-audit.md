@@ -18,7 +18,9 @@ clean. TypeScript clean. The stack starts from `docker compose up` and was verif
 against host Ollama (`llama3.1:8b` + `nomic-embed-text`) **and** the official Lenny's Data
 starter pack (50 podcast transcripts, 4984 chunks). Synthetic fixture rows were removed
 from the demo database. **The remaining unverified live path is Anthropic generation (no
-key).** Latest Ship 30 live quality after the H2 cap has not been re-verified.
+key).** A later Ollama Ship 30 run after the H2 cap landed in range (3 generations, 1,413
+cleaned words, 6 H2s). Artifact Viewer HTML was generated live via API; a browser click-through
+of the iframe was not repeated in the last audit pass.
 
 ---
 
@@ -34,14 +36,14 @@ key).** Latest Ship 30 live quality after the H2 cap has not been re-verified.
 | 6 | RAG retrieves transcript knowledge | `rag/retrieval.py`, pgvector cosine KNN | **live** — stalled-growth query ranked Jason Cohen at distance 0.229 | ✅ |
 | 7 | Answers are grounded | Threshold before generation; evidence-only prompt; marker verification after | **test** (grounding, citation and refusal suites) + **live** for the threshold path | ✅ |
 | 8 | Sources are displayed | `SourceList.tsx`; `message_sources` join | **test** (7 frontend tests) + **manual** | ✅ |
-| 9 | Unsupported questions handled honestly | `retrieval.py` + evidence-only prompt | **live** — Hubble astronauts → refused (`grounded: false`); on a 4984-chunk nomic index `below_threshold` rarely fires at 0.55, so the evidence-only prompt is the backstop (the LLM may still be called) | ✅ |
+| 9 | Unsupported questions handled honestly | `retrieval.py` + evidence-only prompt | **live** — Hubble astronauts: `selected=6`, LLM **was** called (`llm_completed`), `grounded: true` / `refused: false`, text honestly said the transcripts do not cover Hubble (no invented Lenny evidence). On a 4984-chunk nomic index `below_threshold` rarely fires at 0.55; do not claim the model was skipped unless `selected=0` | ✅ |
 | 10 | Follow-ups preserve session context | `build_query` composes bounded history | **test** | ✅ |
 | 11 | Ollama works | `providers/ollama.py` | **live** — Docker backend reached `host.docker.internal:11434`; chat + embeddings + failure path all observed | ✅ |
 | 12 | Cloud LLM works | `providers/anthropic.py` | **unverified** live (no key). Routing/errors **test** | ⚠️ |
 | 13 | Provider switchable | Header toggle + `LLM_PROVIDER`; Anthropic → `ClaudeAgentSDKRuntime`, Ollama → `RouterRuntime` | **test** + **live** (`/api/config` `active_runtime` / per-provider `runtime`) | ✅ |
 | 14 | Provider is visible | `AppHeader.tsx` badge | **live** (`/api/config` supplies it) + **manual** | ✅ |
 | 15 | Ship 30 skill exists as a skill | `agent/skills/ship30.py`, registered separately | **test** + **code** | ✅ |
-| 16 | Essay ≈1,250 words | Target ±15% (1,062–1,437), max 3 generations, post-cleanup count, 4–6 H2 cap | **test** · latest live essay after H2 cap **unverified** | ⚠️ |
+| 16 | Essay ≈1,250 words | Target ±15% (1,062–1,437), max 3 generations, post-cleanup count, 4–6 H2 cap | **test** + **live** — 3 calls, `count_words` 1,413 (= `metadata.word_count`), 6 H2s, cited Elena Verna / Amol Avasare | ✅ |
 | 17 | Essay is grounded | Retrieval-fed, marker-verified, refuses on thin evidence | **test** | ✅ |
 | 18 | Markdown artifacts work | `ArtifactSkill` + `builder.py` | **test** | ✅ |
 | 19 | HTML/CSS artifacts work | Same, plus `sanitizer.py` | **test** | ✅ |
@@ -167,8 +169,8 @@ push back hardest on myself: see §Gaps.
 
 **Is the Ship 30 skill properly separated?** Yes — its own module, prompt, retrieval
 parameters, word counting (1,062–1,437), max 3 generations, post-cleanup continue, 4–6 H2
-cap. Not an inline branch in the chat handler. Latest live essay after the H2 cap is
-unverified.
+cap. Not an inline branch in the chat handler. Live Ollama essay after the H2 cap: 3
+generations, 1,413 cleaned words, 6 H2s (cleanup demoted extra headings; first draft was 364 words).
 
 **Does the Artifact Viewer actually render?** Yes, both formats, with title, loading, error
 and sanitised states. Component-tested; visual confirmation is manual.

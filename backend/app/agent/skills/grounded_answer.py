@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agent.citations import apply_citations
+from app.agent.citations import (
+    acknowledge_short_list,
+    apply_citations,
+    extract_markers,
+    strip_ungrounded_list_padding,
+)
 from app.agent.prompts import GROUNDED_ANSWER_SYSTEM, REFUSAL_MESSAGE
 from app.agent.types import Skill, SkillContext, SkillResult
 from app.core.config import Settings, get_settings
@@ -62,7 +67,10 @@ class GroundedAnswerSkill(Skill):
                 "user",
                 f"EVIDENCE:\n{retrieval.evidence_block()}\n\n"
                 f"QUESTION: {question}\n\n"
-                "Answer using only the EVIDENCE above, citing markers inline.",
+                "Answer using only the EVIDENCE above, citing markers inline. "
+                "If the question asks for N items and the EVIDENCE supports fewer, list only "
+                "the supported items and say the rest could not be verified from the indexed "
+                "transcript. Do not invent, infer, or label a missing item as implicit.",
             )
         )
 
@@ -82,6 +90,9 @@ class GroundedAnswerSkill(Skill):
             )
 
         cleaned, cited, dropped = apply_citations(text, retrieval.chunks)
+        cleaned = strip_ungrounded_list_padding(cleaned)
+        cleaned = acknowledge_short_list(question, cleaned)
+        cited = extract_markers(cleaned) & {chunk.marker for chunk in retrieval.chunks}
         if not cleaned:
             logger.info("grounded_answer_refused", reason="attribution_unverified")
             return SkillResult(

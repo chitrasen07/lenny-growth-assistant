@@ -179,7 +179,7 @@ Assumptions that shaped the build, with what falls over if each is wrong:
 - A CLI with `--status`, `--force`, `--dir`
 
 **Generation**
-- Ship 30 for 30 essay skill: ~1,250 words, grounded, with a bounded revision pass
+- Ship 30 for 30 essay skill: ~1,250 words, grounded, maximum 3 generations, post-cleanup count
 - Markdown artifacts
 - Complete standalone HTML/CSS artifacts
 - In-app Artifact Viewer with sandboxed HTML rendering and a visible sanitiser report
@@ -317,7 +317,7 @@ ask something off-corpus
 
 **Generation**
 - [x] Ship 30 essay is a separate skill, not an inline prompt in the chat handler
-- [x] Essay targets 1,250 words within ±15%, with a bounded revision pass; actual count reported
+- [x] Essay targets 1,250 words within ±15%, maximum 3 generations, count after cleanup; actual count reported
 - [x] Essay refuses on insufficient evidence
 - [x] Markdown and complete HTML/CSS artifacts generate and persist as their own entity
 - [x] The viewer renders both, with title, loading, error and sanitised states
@@ -348,8 +348,8 @@ docs exclusion), pgvector retrieval ranking and threshold behaviour, honest refu
 structured errors, nginx proxying, and the automated test suites.
 **Verified live** — Ollama chat (`llama3.1:8b`) and `nomic-embed-text` embeddings against
 the official 50-transcript / 4984-chunk corpus.
-**Not verified live** — Anthropic generation (no key). Latest Ship 30 live quality after
-the H2 cap has not been re-run for submission.
+**Not verified live** — Anthropic generation (no key).
+**Verified live** — Ship 30 on Ollama after the H2 cap: 3 generations, 1,413 cleaned words, 6 H2s.
 
 ## 11. Risks
 
@@ -357,12 +357,12 @@ the H2 cap has not been re-run for submission.
 | --- | --- | --- | --- |
 | Threshold mistuned for the evaluator's corpus → refuses good questions | High — looks broken | Medium | One documented variable; `retrieval_completed` logs `candidates` vs `selected` and `best_distance`, so mistuning is diagnosable in one line. Troubleshooting table names it |
 | Small local model produces uncited or thin answers | High — undermines the demo | Medium | Markers verified structurally; `uncited_answer` flagged in metadata and surfaced; `llama3.1:8b` recommended over 3B |
-| Live Ollama path unverified by the author | High | — | Stated openly in README, PRD and audit; manual test plan leads with it; failure modes are explicitly handled and tested against a fake provider |
+| Live Anthropic generation unverified (no API key) | High | — | Stated openly in README, PRD and audit; missing-key path returns `provider_not_configured` with no Ollama fallback; manual test plan §2 |
 | Evaluator has no transcripts and stops | High | Medium | Synthetic fixture ingests in one command; UI banner carries the command; `docs/transcripts.md` covers sourcing |
 | Sanitiser bypassed by a mutation-XSS trick | High if it were the only control | Low | It is not the only control — the script-disabled sandboxed iframe is the boundary, and the browser enforces it |
 | Model invents an episode or guest despite the prompt | High — the core trust claim | Low | Metadata comes from the database, not the model; the UI renders stored metadata, never model-asserted names |
 | First response times out while the model loads | Medium — looks broken on message one | Medium | Generous provider timeout, staged progress with elapsed seconds, troubleshooting entry recommending a warm-up run |
-| Essay misses the word target on a small model | Medium | Medium | One bounded revision pass; actual count reported honestly rather than hidden |
+| Essay misses the word target on a small model | Medium | Medium | Maximum 3 generations; count taken after cleanup; metadata reports the actual cleaned count, not the target |
 | Chunk boundary splits a claim from its context | Medium — subtly wrong citation | Low | Speaker-turn chunking with overlap so a boundary-spanning claim survives intact somewhere |
 | CRLF checkout breaks the container entrypoint on Windows | Medium — fails at startup | Was actual | Fixed twice over: `.gitattributes` `eol=lf` and a `sed` in the Dockerfile |
 | Corpus grows past comfortable dense-only retrieval | Medium | Low near-term | HNSW scales well; hybrid retrieval is the first future improvement |

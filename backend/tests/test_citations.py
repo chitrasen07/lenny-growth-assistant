@@ -326,3 +326,107 @@ def test_uncited_percentage_is_stripped():
 
     assert cleaned == ""
     assert cited == set()
+
+
+def test_inferred_fifth_list_item_is_dropped_and_gap_is_acknowledged():
+    from app.agent.citations import MISSING_LIST_ACK, strip_ungrounded_list_padding
+
+    text = (
+        "Dana Okoye recommends four checks [S1]:\n"
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+        "5. (Implicitly) Should you check in with yourself annually [S1]\n"
+    )
+
+    cleaned = strip_ungrounded_list_padding(text)
+
+    assert "Implicitly" not in cleaned
+    assert "annually" not in cleaned
+    assert "channel exhausted" in cleaned
+    assert "activation ever work" in cleaned
+    assert "[S1]" in cleaned
+    assert MISSING_LIST_ACK in cleaned
+    assert "5." not in cleaned
+
+
+def test_uncited_padding_item_in_a_cited_list_is_dropped():
+    from app.agent.citations import MISSING_LIST_ACK, strip_ungrounded_list_padding
+
+    text = (
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+        "5. Hire a growth lead immediately\n"
+    )
+
+    cleaned = strip_ungrounded_list_padding(text)
+
+    assert "Hire a growth lead" not in cleaned
+    assert "Did activation ever work" in cleaned
+    assert MISSING_LIST_ACK in cleaned
+
+
+def test_honest_partial_list_is_left_intact():
+    from app.agent.citations import MISSING_LIST_ACK, strip_ungrounded_list_padding
+
+    text = (
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n\n"
+        "The transcripts do not list a fifth check."
+    )
+
+    assert strip_ungrounded_list_padding(text) == text
+    assert MISSING_LIST_ACK not in text
+
+
+def test_short_list_without_a_gap_sentence_gets_an_acknowledgment():
+    from app.agent.citations import MISSING_LIST_ACK, acknowledge_short_list
+
+    text = (
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+    )
+    question = "What are all five checks Dana Okoye recommends when a launch stalls?"
+
+    cleaned = acknowledge_short_list(question, text)
+
+    assert MISSING_LIST_ACK in cleaned
+    assert "Did activation ever work" in cleaned
+    assert "[S1]" in cleaned
+
+
+def test_complete_requested_list_is_not_flagged_as_missing_evidence():
+    from app.agent.citations import MISSING_LIST_ACK, acknowledge_short_list
+
+    text = (
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n"
+        "3. Is the ICP too broad [S1]\n"
+        "4. Did activation ever work [S1]\n"
+        "5. Are existing customers growing [S1]\n"
+    )
+    question = "What are the five checks when a launch stalls?"
+
+    assert acknowledge_short_list(question, text) == text
+    assert MISSING_LIST_ACK not in text
+
+
+def test_acknowledge_short_list_does_not_double_an_existing_gap_sentence():
+    from app.agent.citations import MISSING_LIST_ACK, acknowledge_short_list
+
+    text = (
+        "1. Is the channel exhausted [S1]\n"
+        "2. Is pricing wrong [S1]\n\n"
+        "The remaining item(s) could not be verified from the indexed transcript."
+    )
+    question = "What are all five questions to ask?"
+
+    assert acknowledge_short_list(question, text) == text
+    assert text.count(MISSING_LIST_ACK) == 1

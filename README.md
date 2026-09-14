@@ -406,7 +406,7 @@ docker compose down -v             # stop and delete the database volume
 
 ## Tests
 
-**Automated tests: 232 backend, 48 frontend.**
+**Automated tests: 253 backend, 48 frontend.**
 
 These numbers are the last full run after the pre-submission alignment; re-run the
 commands below if you change code, and treat the command output as source of truth.
@@ -729,7 +729,7 @@ Stated plainly rather than buried:
 - **The Anthropic path is verified only by mocked tests.** No API key was used for a live Claude generation; provider selection, missing-key errors and the SDK runtime contract are tested against stubs, not the live API.
 - **Retrieval is dense-only.** No BM25/hybrid search and no reranker, so an exact-phrase or acronym query can underperform. Simple and explainable was preferred at this corpus size.
 - **Relevance is one global threshold.** A single `RETRIEVAL_MAX_DISTANCE` cannot be right for every question shape; a per-query calibration would be better. On a ~5k-chunk nomic index, out-of-corpus questions often still retrieve weak neighbours, so the model may be called and then refuse from evidence rather than being skipped.
-- **Essay length is approximate.** Target 1,250 words (accepted 1,062–1,437), maximum 3 generations, word count taken after citation cleanup. A small local model can still land outside tolerance; metadata reports the actual count. Latest live essay quality after the H2 cap has not been re-verified for submission.
+- **Essay length is approximate.** Target 1,250 words (accepted 1,062–1,437), maximum 3 generations, word count taken after citation cleanup from the cleaned draft. A small local model can still land outside tolerance after three calls; metadata reports the actual cleaned count, not the target.
 - **`<meta>` CSP is weaker than an HTTP header**, and the sanitiser is syntactic, not a browser (§[Artifact Security](#artifact-security)).
 - **No authentication and no rate limiting.** Out of scope per the assignment; fine locally, not deployable as-is.
 - **Sessions are anonymous and unscoped** — anyone reaching the API sees all sessions. Acceptable for a single-user local tool only.
@@ -745,7 +745,7 @@ Full script with timings: **[`docs/demo-script.md`](docs/demo-script.md)**. Shap
 4. Expand a source → the exact excerpt, speaker and file the claim came from.
 5. Follow-up ("what about for B2B SaaS?") → context resolves, grounding still from retrieval.
 6. A question the corpus does not cover → honest refusal, no fabrication.
-7. "Write a Ship 30 for 30 essay about activation" → ~1,250 grounded words (1,062–1,437; not claimed live-verified until you generate one for the recording).
+7. "Write a Ship 30 for 30 essay about activation" → ~1,250 grounded words (1,062–1,437; live-checked on Ollama: 3 generations, 1,413 cleaned words, 6 H2s). Pre-generate before recording — it takes ~2–3 minutes.
 8. "Create a landing page for this" → HTML renders in the Artifact Viewer.
 9. Show the sandbox attribute and the sanitiser report — why generated HTML cannot execute.
 10. The trade-off: Ollama uses deterministic routing; selecting Anthropic uses the Claude Agent SDK.
