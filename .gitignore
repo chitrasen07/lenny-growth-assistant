@@ -1,0 +1,39 @@
+# Secrets — never commit real environment files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+*.tsbuildinfo
+
+# Transcript data: the corpus is supplied by whoever runs the app and is not
+# redistributed here. The README/docs/transcripts.md explain what to add.
+data/transcripts/*
+!data/transcripts/.gitkeep
+!data/transcripts/README.md
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log

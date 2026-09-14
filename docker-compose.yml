@@ -1,0 +1,114 @@
+# Reproducible local stack: Postgres (with pgvector), FastAPI backend, nginx frontend.
+#
+# Ollama is intentionally NOT a service here. It needs host GPU/Metal access to be
+# usable, and the evaluator has likely already pulled models — containerising it would
+# re-download several GB and run inference on CPU only. Containers reach the host
+# daemon via host.docker.internal (see .env.example / README "Ollama setup").
+#
+#   cp .env.example .env && docker compose up --build
+#   -> UI  http://localhost:3000
+#   -> API http://localhost:8000/docs
+
+services:
+  db:
+    # Ships the pgvector extension, so no build step or manual install is needed.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lenny}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lenny}
+      POSTGRES_DB: ${POSTGRES_DB:-lenny}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Exposed so the ingestion CLI and tests can run from the host if preferred.
+      # Host port is configurable because 5432 is often already taken by another
+      # local Postgres; the container port (and the backend's DATABASE_URL) stay 5432.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lenny} -d ${POSTGRES_DB:-lenny}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lenny}:${POSTGRES_PASSWORD:-lenny}@db:5432/${POSTGRES_DB:-lenny}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      AGENT_RUNTIME: ${AGENT_RUNTIME:-router}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-5}
+      RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-6}
+      RETRIEVAL_MAX_DISTANCE: ${RETRIEVAL_MAX_DISTANCE:-0.55}
+      ESSAY_TARGET_WORDS: ${ESSAY_TARGET_WORDS:-1250}
+      TRANSCRIPTS_DIR: /data/transcripts
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+    volumes:
+      # Mounted, not copied, so adding a transcript needs no image rebuild.
+      - ./data/transcripts:/data/transcripts:ro
+      # Clearly-labelled synthetic fixture, kept out of the real corpus directory so it is
+      # never ingested by accident. See data/sample-transcripts/README.md.
+      - ./data/sample-transcripts:/data/sample-transcripts:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      # Makes host.docker.internal resolve on Linux, where it is not automatic.
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status==200 else 1)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 25s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Empty base URL => same-origin /api/*, proxied to the backend by nginx.
+        VITE_API_BASE_URL: ""
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # Backend test suite. Not started by `docker compose up` — it sits behind a profile:
+  #
+  #   docker compose --profile test run --rm tests
+  #
+  # It needs a real PostgreSQL because pgvector similarity search is the behaviour under
+  # test, and it creates/drops its own `lenny_test` database. No LLM or Ollama is needed:
+  # the suite uses a deterministic offline embedder and a scripted fake provider.
+  tests:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lenny}:${POSTGRES_PASSWORD:-lenny}@db:5432/lenny_test
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["test"]
+
+volumes:
+  postgres_data:

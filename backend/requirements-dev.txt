@@ -1,0 +1,10 @@
+-r requirements.txt
+
+pytest==9.0.1
+pytest-asyncio==1.3.0
+httpx==0.28.1
+ruff==0.15.1
+
+# claude-agent-sdk is already installed via requirements.txt (runtime image).
+# Dispatch is by provider: Anthropic → ClaudeAgentSDKRuntime; Ollama → RouterRuntime.
+# AGENT_RUNTIME is not the selector.

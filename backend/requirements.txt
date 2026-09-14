@@ -1,0 +1,25 @@
+# Core web framework
+fastapi==0.121.1
+uvicorn[standard]==0.40.0
+pydantic==2.13.1
+pydantic-settings==2.13.0
+
+# Database
+SQLAlchemy==2.0.44
+psycopg[binary,pool]==3.2.12
+pgvector==0.5.0
+alembic==1.17.1
+
+# HTTP client (Ollama + generic providers)
+httpx==0.28.1
+
+# Cloud LLM provider
+anthropic==1.5.0
+# Agent runtime used when the resolved provider is Anthropic (not Ollama).
+claude-agent-sdk==0.2.152
+
+# Structured logging
+structlog==25.5.0
+
+# Artifact sanitisation
+beautifulsoup4==4.15.0

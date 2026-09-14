@@ -1,0 +1,388 @@
+/* App shell: header, sidebar, and the chat / artifact split. */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.app__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.app__main {
+  display: grid;
+  /* Chat and Artifact Viewer side by side on the desktop layout. */
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------------ header */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  min-height: var(--header-height);
+  padding: 0.6rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header__brand h1 {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.app-header__brand p {
+  margin: 0.1rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.app-header__status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.provider-badge,
+.provider-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  background: var(--accent-soft);
+  border: 1px solid #c9d9f7;
+  border-radius: 999px;
+}
+
+.provider-badge--error,
+.provider-switcher--error {
+  background: var(--danger-soft);
+  border-color: #f3c9c6;
+}
+
+.provider-switcher__label {
+  display: block;
+}
+
+.provider-switcher select {
+  display: block;
+  max-width: 16rem;
+  margin: 0;
+  padding: 0 1.15rem 0 0;
+  border: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%235c6570' d='M0 0l5 6 5-6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right center;
+  background-size: 8px 5px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.provider-switcher select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.provider-switcher__warning {
+  font-size: 0.74rem;
+  font-weight: 550;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid #f3c9c6;
+  border-radius: 999px;
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+
+.provider-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+}
+
+.provider-badge__dot.is-error {
+  background: var(--danger);
+}
+
+.provider-badge__text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.provider-badge__text strong {
+  font-size: 0.78rem;
+}
+
+.provider-badge__text span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.app-header__runtime,
+.app-header__kb {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+
+.app-header__kb.is-warning {
+  background: var(--warning-soft);
+  border-color: #efdcb8;
+  color: var(--warning);
+}
+
+/* ------------------------------------------------------------ status banner */
+.status-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.7rem 1.25rem;
+  background: var(--warning-soft);
+  border-bottom: 1px solid #efdcb8;
+}
+
+.status-banner__item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--warning);
+}
+
+.status-banner__item strong {
+  color: #6b4100;
+}
+
+.status-banner__item code {
+  background: #fff;
+  border-color: #efdcb8;
+  color: var(--text);
+}
+
+/* ----------------------------------------------------------------- sidebar */
+.sidebar {
+  width: var(--sidebar-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.sidebar__new {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 550;
+  padding: 0.55rem 0.85rem;
+}
+
+.sidebar__new:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.sidebar__heading {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-subtle);
+  margin-top: 0.5rem;
+}
+
+.sidebar__state {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.sidebar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar__item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar__item.is-active {
+  background: var(--accent-soft);
+}
+
+.sidebar__link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+}
+
+.sidebar__item.is-active .sidebar__link {
+  background: none;
+}
+
+.sidebar__title {
+  font-size: 0.86rem;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__meta {
+  font-size: 0.72rem;
+  color: var(--text-subtle);
+}
+
+.sidebar__delete {
+  border: none;
+  background: none;
+  color: var(--text-subtle);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0.45rem;
+  border-radius: var(--radius-sm);
+  /* Revealed on hover/focus to keep the list calm, but always reachable by keyboard. */
+  opacity: 0;
+}
+
+.sidebar__item:hover .sidebar__delete,
+.sidebar__delete:focus-visible {
+  opacity: 1;
+}
+
+.sidebar__delete:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ------------------------------------------------------------ error banner */
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 0;
+  padding: 0.8rem 1rem;
+  background: var(--danger-soft);
+  border: 1px solid #f3c9c6;
+  border-radius: var(--radius);
+}
+
+.error-banner__body strong {
+  display: block;
+  color: var(--danger);
+  margin-bottom: 0.2rem;
+}
+
+.error-banner__body p {
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+.error-banner__remedy {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.error-banner__code {
+  font-family: var(--mono);
+  font-size: 0.72rem !important;
+  color: var(--text-subtle);
+}
+
+.error-banner__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex: none;
+}
+
+.callout {
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.callout--warning {
+  background: var(--warning-soft);
+  border-color: #efdcb8;
+}
+
+.callout strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+/* -------------------------------------------------------------- responsive */
+@media (max-width: 1024px) {
+  /* Stack the panes so the Artifact Viewer stays usable on a narrow screen. */
+  .app__main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 1fr) minmax(300px, 1fr);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --sidebar-width: 100%;
+  }
+
+  .app__body {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    max-height: 148px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar__delete {
+    opacity: 1;
+  }
+}

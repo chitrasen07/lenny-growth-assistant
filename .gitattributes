@@ -1,2 +1,10 @@
-# Auto detect text files and perform LF normalization
+# Normalise text files to LF in the repository.
 * text=auto
+
+# Files consumed by Linux containers must be LF on checkout regardless of the host OS.
+# A CRLF shebang makes the kernel look for the interpreter "/bin/sh\r", which fails with
+# a confusing "no such file or directory" pointing at the script itself.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf
+entrypoint.sh text eol=lf
